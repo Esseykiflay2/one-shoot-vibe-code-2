@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080b18">
+  <title>Last One Standing — Survivor Arena</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #080b18; }
+    body { color: #f8fafc; }
+    #arena { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+    .glass { background: rgba(13, 18, 38, .78); border: 1px solid rgba(255,255,255,.13); box-shadow: 0 24px 80px rgba(0,0,0,.38); backdrop-filter: blur(18px); }
+    .overlay { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 18px; overflow-y: auto; background: rgba(4, 6, 17, .42); }
+    .hidden { display: none !important; }
+    .field { width: 100%; border: 1px solid rgba(255,255,255,.15); border-radius: .8rem; background: rgba(255,255,255,.07); padding: .65rem .8rem; color: #f8fafc; outline: none; }
+    .field:focus { border-color: rgba(129,140,248,.9); box-shadow: 0 0 0 3px rgba(99,102,241,.2); }
+    .field option { background: #11172b; }
+    .pill { border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06); border-radius: 999px; padding: .25rem .65rem; }
+    .action { border-radius: .85rem; background: linear-gradient(135deg,#7c3aed,#4f46e5); padding: .8rem 1rem; font-weight: 750; color: white; transition: filter .15s, transform .15s; }
+    .action:hover { filter: brightness(1.13); transform: translateY(-1px); }
+    #hud { position: fixed; z-index: 2; inset: 14px 16px auto; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; pointer-events: none; }
+    #hud > * { pointer-events: auto; }
+    #leaderboard { position: fixed; right: 16px; bottom: 16px; z-index: 2; width: min(300px, calc(100vw - 32px)); }
+    #toast { position: fixed; z-index: 5; top: 84px; left: 50%; transform: translateX(-50%); transition: opacity .3s, translate .3s; }
+    #toast.fade { opacity: 0; translate: 0 -8px; }
+    @media (max-width: 640px) {
+      #hud { inset: 10px 10px auto; }
+      #leaderboard { right: 10px; bottom: 10px; }
+      .hide-small { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="arena" aria-label="Survivor ball game arena"></canvas>
+
+  <div id="hud" class="hidden">
+    <div class="glass rounded-2xl px-4 py-3">
+      <div class="flex items-center gap-3">
+        <span class="text-xl">✦</span>
+        <div>
+          <div class="text-xs font-bold uppercase tracking-[.2em] text-indigo-200">Last One Standing</div>
+          <div id="game-status" class="text-sm text-slate-200">Press Space to launch</div>
+        </div>
+      </div>
+    </div>
+    <div class="glass rounded-2xl px-4 py-3 text-right">
+      <div id="remaining-count" class="text-xl font-black">20 / 20</div>
+      <div id="mode-label" class="text-xs text-slate-300">Classic Elimination</div>
+    </div>
+  </div>
+  <div id="leaderboard" class="hidden glass rounded-2xl p-3"></div>
+  <div id="toast" class="hidden glass rounded-xl px-4 py-3 text-sm font-semibold"></div>
+
+  <main id="setup" class="overlay">
+    <section class="glass w-full max-w-3xl rounded-3xl p-6 sm:p-8">
+      <div class="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <p class="mb-2 text-xs font-bold uppercase tracking-[.24em] text-indigo-300">The arena is ready</p>
+          <h1 class="text-3xl font-black tracking-tight sm:text-4xl">Last One <span class="text-indigo-300">Standing</span></h1>
+          <p class="mt-2 max-w-xl text-sm leading-6 text-slate-300">Pick a field, place your bet, and let the bouncing balls decide the champion.</p>
+        </div>
+        <span class="pill text-xs text-slate-300">20 contenders</span>
+      </div>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <label class="text-sm font-semibold text-slate-200">Category
+          <select id="category" class="field mt-2">
+            <option value="countries">🌍 World Countries</option>
+            <option value="clubs">⚽ Soccer Clubs</option>
+            <option value="nba">🏀 NBA Teams</option>
+            <option value="custom">✨ Custom Category</option>
+          </select>
+        </label>
+        <label class="text-sm font-semibold text-slate-200">Game mode
+          <select id="mode" class="field mt-2">
+            <option value="classic">Classic Elimination</option>
+            <option value="speed">Speed Ramp</option>
+            <option value="chaos">Multi-Ball Chaos</option>
+            <option value="gravity">Gravity &amp; Center Bumpers</option>
+            <option value="shrinking">Shrinking Zone (Battle Royale)</option>
+          </select>
+        </label>
+        <label class="text-sm font-semibold text-slate-200 sm:col-span-2">Betting
+          <select id="betting" class="field mt-2">
+            <option value="single">Single-player bet</option>
+            <option value="multi">Multiplayer (2–6 players)</option>
+            <option value="none">No bets — just play</option>
+          </select>
+        </label>
+      </div>
+      <div id="custom-area" class="mt-4 hidden">
+        <label class="text-sm font-semibold text-slate-200">Your 20 contenders
+          <textarea id="custom-names" class="field mt-2 min-h-24 resize-y" placeholder="Paste exactly 20 names, separated by commas"></textarea>
+        </label>
+        <p class="mt-1 text-xs text-slate-400">Enter exactly 20 unique names separated by commas.</p>
+      </div>
+      <div id="bet-setup" class="mt-4"></div>
+      <p id="setup-error" class="mt-3 hidden text-sm font-semibold text-rose-300" role="alert"></p>
+      <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-5">
+        <p class="text-xs text-slate-400">Space launches · click any contender to eliminate · sound begins after interaction</p>
+        <button id="start-button" class="action">Enter the Arena <span aria-hidden="true">→</span></button>
+      </div>
+    </section>
+  </main>
+
+  <div id="result" class="overlay hidden" role="dialog" aria-modal="true">
+    <section class="glass w-full max-w-xl rounded-3xl p-6 sm:p-8">
+      <p id="result-eyebrow" class="text-xs font-bold uppercase tracking-[.22em] text-indigo-300"></p>
+      <h2 id="result-title" class="mt-2 text-4xl font-black"></h2>
+      <p id="result-subtitle" class="mt-3 text-slate-200"></p>
+      <div id="champion-details" class="mt-5 grid gap-3 sm:grid-cols-2">
+        <div class="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-indigo-200">About the Champion</h3>
+          <p id="champion-about" class="mt-2 text-sm leading-6 text-slate-300"></p>
+        </div>
+        <div class="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-amber-200">Fun Fact</h3>
+          <p id="champion-fact" class="mt-2 text-sm leading-6 text-slate-300"></p>
+        </div>
+      </div>
+      <div class="mt-6 flex flex-wrap gap-3">
+        <button id="again-button" class="action">Play Again <span class="text-xs font-normal text-indigo-100">· Space</span></button>
+        <button id="menu-button" class="rounded-xl border border-white/15 px-4 py-3 font-semibold text-slate-200 hover:bg-white/10">Return to Menu</button>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    "use strict";
+    const DATA = {
+      countries: [
+        ["Japan","#ef476f","🇯🇵","Japan's imperial court and shogunates shaped a long cultural history before its modern era.","Japan has more than 6,000 islands."],
+        ["Brazil","#36c98f","🇧🇷","Brazil became independent in 1822 and is the largest country in South America.","Brazil is home to a vast share of the Amazon rainforest."],
+        ["France","#6495ed","🇫🇷","The French Republic was founded after the French Revolution, which began in 1789.","The Louvre is one of the world's largest art museums."],
+        ["Canada","#ff5c68","🇨🇦","Canada formed as a confederation in 1867 and grew into the world's second-largest country by area.","Canada has the world's longest coastline."],
+        ["Australia","#f4a261","🇦🇺","Australia federated in 1901, uniting six British colonies as a Commonwealth.","The Great Barrier Reef is the largest coral reef system on Earth."],
+        ["India","#f4a261","🇮🇳","India became an independent republic in 1947 after a long independence movement.","India is the world's most populous country."],
+        ["Mexico","#42c783","🇲🇽","Mexico's history includes ancient Maya and Aztec civilizations and independence in 1821.","Mexico City is built near the site of the Aztec capital Tenochtitlan."],
+        ["Italy","#56c98b","🇮🇹","Italy unified as a kingdom in 1861, bringing together a peninsula rich in ancient history.","The country has more UNESCO World Heritage sites than any other."],
+        ["South Korea","#6ba6ff","🇰🇷","The Republic of Korea was established in 1948 and experienced rapid industrial growth.","South Korea has one of the world's fastest average internet speeds."],
+        ["Spain","#ff8b45","🇪🇸","Spain's kingdoms united over centuries, with the modern constitutional monarchy established in 1978.","Spain has 17 autonomous communities."],
+        ["Germany","#c8a66b","🇩🇪","German unification in 1871 was followed by reunification in 1990.","Germany has over 20,000 castles, many in various states of preservation."],
+        ["Argentina","#78aaff","🇦🇷","Argentina declared independence in 1816 and became a federation in the nineteenth century.","The name Argentina comes from the Latin word for silver."],
+        ["Egypt","#e2bd63","🇪🇬","Egypt's ancient civilization flourished along the Nile; the modern republic was proclaimed in 1953.","The Great Pyramid of Giza is the only surviving ancient wonder of the world."],
+        ["South Africa","#74c69d","🇿🇦","South Africa became a democratic republic in 1994 after the end of apartheid.","It has three capital cities: Pretoria, Cape Town, and Bloemfontein."],
+        ["Sweden","#70c9b3","🇸🇪","Sweden's modern parliamentary system developed over centuries; it has been a constitutional monarchy since 1809.","Sweden has a right of public access to much of its countryside."],
+        ["Greece","#72a7ed","🇬🇷","Ancient Greek city-states influenced philosophy and democracy; modern Greece became independent in 1830.","The Olympic Games originated in ancient Olympia."],
+        ["Nigeria","#59c887","🇳🇬","Nigeria gained independence in 1960 and is Africa's most populous nation.","More than 500 languages are spoken in Nigeria."],
+        ["New Zealand","#82d0a1","🇳🇿","New Zealand became a self-governing dominion in 1907 and is known for its Māori heritage.","The Māori name Aotearoa is commonly translated as 'land of the long white cloud'."],
+        ["Norway","#6da9ee","🇳🇴","Norway's constitution dates to 1814; it became fully independent in 1905.","Norway's coastline is shaped by thousands of fjords and islands."],
+        ["Morocco","#e57851","🇲🇦","Morocco's Alaouite dynasty dates to the seventeenth century; the country regained independence in 1956.","The University of al-Qarawiyyin in Fez is often described as the oldest existing university."]
+      ],
+      clubs: [
+        ["Real Madrid","#f5f5f5","👑","Founded in 1902, Real Madrid became one of European football's most decorated clubs.","The club's name received the royal title 'Real' in 1920."],
+        ["FC Barcelona","#e63946","🔵","Founded in 1899, Barcelona grew into a major Catalan sporting institution.","The club motto is 'Més que un club' — more than a club."],
+        ["Manchester City","#55aaff","🩵","Founded as St. Mark's in 1880, Manchester City adopted its current name in 1894.","The club's home ground is the Etihad Stadium."],
+        ["Bayern Munich","#e63946","🔴","Established in 1900, Bayern Munich became Germany's most successful football club.","The club plays at the Allianz Arena, famous for its changing exterior lights."],
+        ["Liverpool FC","#e63946","🔴","Founded in 1892, Liverpool built a storied history at Anfield.","Anfield's famous 'You'll Never Walk Alone' anthem is sung by supporters."],
+        ["Manchester United","#ef476f","👹","Formed as Newton Heath in 1878, the club became Manchester United in 1902.","Old Trafford is nicknamed the Theatre of Dreams."],
+        ["Arsenal FC","#e83e55","🔴","Founded by munitions workers in 1886, Arsenal is one of London's historic clubs.","Arsenal's 2003–04 league side went unbeaten across the entire season."],
+        ["Chelsea FC","#4b85ed","🔵","Chelsea was founded in 1905 at Stamford Bridge in west London.","The club's mascot is a lion named Stamford the Lion."],
+        ["Paris Saint-Germain","#4d78e8","🔵","Created in 1970, PSG represents the French capital in top-flight football.","The Eiffel Tower has featured prominently in the club's badge designs."],
+        ["Juventus","#f5f5f5","⚫","Founded in Turin in 1897, Juventus is one of Italy's oldest and most successful clubs.","The club's nickname 'La Vecchia Signora' means 'The Old Lady'."],
+        ["Inter Milan","#3886db","⚫","Internazionale was founded in 1908 by members who wanted an open international club.","Inter's home stadium, San Siro, is shared with city rival AC Milan."],
+        ["AC Milan","#ed3a48","🔴","Founded in 1899, AC Milan became a powerhouse in Italian and European football.","The club's traditional colors are red and black."],
+        ["Borussia Dortmund","#f0c330","🟡","Founded in 1909, Dortmund is known for passionate support at Signal Iduna Park.","The stadium's south stand, the Yellow Wall, is Europe's largest terrace."],
+        ["Ajax","#e94454","🔴","Established in Amsterdam in 1900, Ajax developed a celebrated youth academy.","The club is named after Ajax, a hero from Greek mythology."],
+        ["Atlético Madrid","#ed4651","🔴","Founded in 1903, Atlético Madrid is one of the capital's two major clubs.","Supporters call the team 'Los Colchoneros', or the mattress makers."],
+        ["Tottenham Hotspur","#f3f4f6","🐓","Founded in 1882, Tottenham has played in north London for its entire history.","The cockerel on the badge stands atop a football."],
+        ["Benfica","#ed3c45","🦅","Founded in Lisbon in 1904, Benfica is one of Portugal's most supported clubs.","The eagle mascot flies above the pitch before home matches."],
+        ["Celtic FC","#58c77b","🍀","Established in Glasgow in 1887, Celtic has a deep community-rooted history.","Celtic Park is often called Paradise by its supporters."],
+        ["Flamengo","#e43b4e","🔴","Founded in Rio de Janeiro in 1895, Flamengo is among Brazil's most popular clubs.","Flamengo began as a rowing club before forming its football section."],
+        ["River Plate","#e54855","⚪","Founded in Buenos Aires in 1901, River Plate is a giant of Argentine football.","The club's nickname, Los Millonarios, means 'the millionaires'."]
+      ],
+      nba: [
+        ["LA Lakers","#f5c542","💜","The Lakers began in Minneapolis in 1947 and moved to Los Angeles in 1960.","The team name refers to Minnesota's many lakes."],
+        ["Boston Celtics","#53cf8a","☘️","Founded in 1946, Boston became one of the NBA's foundational franchises.","The leprechaun mascot Lucky has appeared in team branding for decades."],
+        ["Golden State Warriors","#f5c542","🌉","The franchise began in Philadelphia in 1946 and moved to California in 1962.","The team's name has remained Warriors through multiple city changes."],
+        ["Chicago Bulls","#e94b55","🐂","Established in 1966, Chicago became a global basketball brand in the 1990s.","The Bulls are the only NBA team to win 70 or more games twice in one season."],
+        ["Miami Heat","#fa654d","🔥","The Heat joined the NBA as an expansion team in 1988.","The team's flaming basketball logo is known as the 'Miami Vice' era inspiration."],
+        ["New York Knicks","#f2a84a","🗽","Founded in 1946, the Knicks are one of the NBA's original teams.","Knickerbocker is an old term for a person from New York."],
+        ["Dallas Mavericks","#64a9ed","🐎","Dallas entered the NBA in 1980 as an expansion franchise.","The team's name was selected through a fan contest."],
+        ["Phoenix Suns","#f59c42","☀️","The Suns joined the NBA in 1968 as Phoenix's major professional basketball team.","A fan contest selected the Suns name from over 28,000 entries."],
+        ["Philadelphia 76ers","#5792ee","🔔","The franchise began in Syracuse and moved to Philadelphia in 1963.","The 76ers name honors the signing of the Declaration of Independence in 1776."],
+        ["Brooklyn Nets","#5d91ef","🗽","The Nets began in the ABA in 1967 and joined the NBA in 1976.","The name 'Nets' rhymes with New York's baseball and football team names."],
+        ["Milwaukee Bucks","#64c985","🦌","Founded in 1968, Milwaukee is Wisconsin's NBA franchise.","The Bucks name was chosen from more than 40,000 fan submissions."],
+        ["Denver Nuggets","#f6bb4e","⛏️","Denver's current NBA franchise began play in 1976 after the ABA merger.","The Nuggets name nods to Colorado's mining history."],
+        ["Cleveland Cavaliers","#f0b74c","⚔️","The Cavaliers joined the NBA in 1970 as an expansion team.","A fan contest selected 'Cavaliers' as a symbol of bravery."],
+        ["Toronto Raptors","#e64b58","🦖","Toronto joined the NBA in 1995 as part of its Canadian expansion.","The name was chosen during the 1990s dinosaur craze."],
+        ["Atlanta Hawks","#e85c59","🦅","The franchise traces its roots to the Tri-Cities Blackhawks of 1946.","The Hawks have represented Atlanta since 1968."],
+        ["Portland Trail Blazers","#e95059","🌲","Portland joined the NBA in 1970 as an expansion team.","The name Trail Blazers was chosen to evoke pioneers exploring the Pacific Northwest."],
+        ["San Antonio Spurs","#f3f4f6","⭐","The Spurs began in the ABA as the Dallas Chaparrals before moving to San Antonio.","The team's silver-and-black colors have stayed consistent for decades."],
+        ["Oklahoma City Thunder","#55a8e8","⛈️","The Thunder began play in Oklahoma City in 2008.","The name and colors were selected to reflect Oklahoma's stormy weather."],
+        ["Minnesota Timberwolves","#61a9e9","🐺","Minnesota's NBA expansion franchise began play in 1989.","The Timberwolves name won a statewide fan vote."],
+        ["Indiana Pacers","#f4b547","🏁","The Pacers entered the NBA in 1976 after winning three ABA championships.","The name references Indiana's auto-racing pace cars and harness-racing heritage."]
+      ]
+    };
+
+    const canvas = document.getElementById("arena");
+    const ctx = canvas.getContext("2d");
+    const $ = (id) => document.getElementById(id);
+    const ui = {
+      setup: $("setup"), category: $("category"), mode: $("mode"), betting: $("betting"),
+      betSetup: $("bet-setup"), customArea: $("custom-area"), customNames: $("custom-names"),
+      setupError: $("setup-error"), start: $("start-button"), hud: $("hud"),
+      status: $("game-status"), remaining: $("remaining-count"), modeLabel: $("mode-label"),
+      leaderboard: $("leaderboard"), toast: $("toast"), result: $("result"),
+      resultEyebrow: $("result-eyebrow"), resultTitle: $("result-title"),
+      resultSubtitle: $("result-subtitle"), details: $("champion-details"),
+      about: $("champion-about"), fact: $("champion-fact")
+    };
+    const MODE_NAMES = {
+      classic: "Classic Elimination", speed: "Speed Ramp", chaos: "Multi-Ball Chaos",
+      gravity: "Gravity & Center Bumpers", shrinking: "Shrinking Zone"
+    };
+    let width = 0, height = 0, dpr = 1, nodes = [], balls = [], particles = [], badges = [];
+    let players = [], gameMode = "classic", phase = "setup", sound = null;
+    let lastFrame = 0, elapsed = 0, arenaProgress = 0, winner = null, toastTimer = 0;
+    let bumperPositions = [];
+
+    function resize() {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+      canvas.style.width = width + "px";
+      canvas.style.height = height + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (phase === "setup") draw();
+    }
+    window.addEventListener("resize", resize);
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      })[char]);
+    }
+    function randomColor(index) {
+      const colors = ["#60a5fa","#fb7185","#a78bfa","#34d399","#fbbf24","#22d3ee","#f97316","#e879f9"];
+      return colors[index % colors.length];
+    }
+    function getEntries() {
+      if (ui.category.value !== "custom") {
+        return DATA[ui.category.value].map(([name,color,icon,about,fact]) => ({name,color,icon,about,fact}));
+      }
+      const names = ui.customNames.value.split(",").map((name) => name.trim()).filter(Boolean);
+      if (names.length !== 20 || new Set(names.map((name) => name.toLocaleLowerCase())).size !== 20) {
+        throw new Error("Custom category needs exactly 20 unique, non-empty names.");
+      }
+      return names.map((name, index) => ({
+        name, color: randomColor(index), icon: "✦",
+        about: name + " is one of the custom contenders chosen for this arena.",
+        fact: "This contender was added by you. Make it the champion!"
+      }));
+    }
+    function renderBetSetup() {
+      const type = ui.betting.value;
+      ui.customArea.classList.toggle("hidden", ui.category.value !== "custom");
+      if (type === "none") { ui.betSetup.innerHTML = ""; return; }
+      let entries;
+      try { entries = getEntries(); }
+      catch (_) { entries = Array.from({length:20}, (_, i) => ({name: "Contender " + (i + 1)})); }
+      const optionList = entries.map((item, i) => `<option value="${i}">${escapeHtml(item.name)}</option>`).join("");
+      if (type === "single") {
+        ui.betSetup.innerHTML = `<label class="block text-sm font-semibold text-slate-200">Your winning pick<select id="single-pick" class="field mt-2">${optionList}</select></label>`;
+        return;
+      }
+      ui.betSetup.innerHTML = `
+        <div class="mb-3 flex items-center justify-between">
+          <label for="player-count" class="text-sm font-semibold text-slate-200">Local players</label>
+          <select id="player-count" class="field w-24 py-2"><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select>
+        </div>
+        <div id="player-fields" class="grid gap-3 sm:grid-cols-2"></div>`;
+      const count = $("player-count");
+      const renderPlayers = () => {
+        $("player-fields").innerHTML = Array.from({length:Number(count.value)}, (_, i) => `
+          <div class="rounded-xl border border-white/10 bg-white/[.035] p-3">
+            <label class="text-xs font-semibold text-slate-300">Player ${i + 1} name
+              <input class="field player-name mt-1" maxlength="24" value="Player ${i + 1}" aria-label="Player ${i + 1} name">
+            </label>
+            <label class="mt-2 block text-xs font-semibold text-slate-300">Their pick
+              <select class="field player-pick mt-1" aria-label="Player ${i + 1} pick">${optionList}</select>
+            </label>
+          </div>`).join("");
+      };
+      count.addEventListener("change", renderPlayers);
+      renderPlayers();
+    }
+    ui.category.addEventListener("change", renderBetSetup);
+    ui.betting.addEventListener("change", renderBetSetup);
+    ui.customNames.addEventListener("input", () => { if (ui.category.value === "custom") renderBetSetup(); });
+    renderBetSetup();
+
+    function setupPlayers() {
+      if (ui.betting.value === "none") return [];
+      if (ui.betting.value === "single") {
+        return [{name:"You", pick:Number($("single-pick").value), alive:true, single:true}];
+      }
+      return Array.from(document.querySelectorAll(".player-name"), (input, index) => ({
+        name: input.value.trim() || "Player " + (index + 1),
+        pick: Number(document.querySelectorAll(".player-pick")[index].value),
+        alive: true, single: false
+      }));
+    }
+    function ensureAudio() {
+      if (!sound) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContext) return;
+        sound = new AudioContext();
+      }
+      if (sound.state === "suspended") sound.resume();
+    }
+    function tone(frequency, duration, type, volume, delay) {
+      if (!sound) return;
+      const oscillator = sound.createOscillator();
+      const gain = sound.createGain();
+      const start = sound.currentTime + (delay || 0);
+      oscillator.type = type || "sine";
+      oscillator.frequency.setValueAtTime(frequency, start);
+      gain.gain.setValueAtTime(Math.max(volume || .035, .001), start);
+      gain.gain.exponentialRampToValueAtTime(.001, start + duration);
+      oscillator.connect(gain);
+      gain.connect(sound.destination);
+      oscillator.start(start);
+      oscillator.stop(start + duration);
+    }
+    function playSound(kind) {
+      if (kind === "bounce") tone(180 + Math.random() * 100, .055, "sine", .025);
+      if (kind === "hit") { tone(440, .09, "triangle", .05); tone(660, .15, "sine", .04, .06); }
+      if (kind === "loss") { tone(190, .34, "sawtooth", .08); tone(115, .48, "square", .055, .2); }
+      if (kind === "win") [523,659,784,1047].forEach((f,i) => tone(f,.34,"triangle",.055,i*.13));
+    }
+
+    function startGame() {
+      try {
+        const entries = getEntries();
+        players = setupPlayers();
+        ensureAudio();
+        gameMode = ui.mode.value;
+        nodes = entries.map((entry, index) => ({...entry, id:index, x:0, y:0, r:19, scale:1, alive:true}));
+        placeNodes();
+        balls = [];
+        spawnBalls(gameMode === "chaos" ? 3 : 1);
+        particles = [];
+        badges = [];
+        elapsed = 0;
+        arenaProgress = 0;
+        winner = null;
+        phase = "playing";
+        ui.setup.classList.add("hidden");
+        ui.result.classList.add("hidden");
+        ui.hud.classList.remove("hidden");
+        ui.modeLabel.textContent = MODE_NAMES[gameMode];
+        ui.status.textContent = "Press Space to launch";
+        ui.setupError.classList.add("hidden");
+        bumperPositions = createBumpers();
+        updateHud();
+        lastFrame = performance.now();
+        requestAnimationFrame(frame);
+      } catch (error) {
+        ui.setupError.textContent = error.message;
+        ui.setupError.classList.remove("hidden");
+      }
+    }
+    function placeNodes() {
+      const minSide = Math.min(width, height);
+      const radius = Math.max(12, Math.min(19, minSide / 32));
+      nodes.forEach((node, index) => {
+        node.r = radius;
+        let placed = false;
+        for (let attempt = 0; attempt < 1000 && !placed; attempt++) {
+          const margin = radius + 28;
+          const x = margin + Math.random() * Math.max(1, width - margin * 2);
+          const y = margin + Math.random() * Math.max(1, height - margin * 2);
+          placed = nodes.slice(0, index).every((other) =>
+            Math.hypot(other.x - x, other.y - y) >= radius + other.r + 12);
+          if (placed) { node.x = x; node.y = y; }
+        }
+        if (!placed) {
+          const angle = index * Math.PI * (3 - Math.sqrt(5));
+          const distance = Math.min(width, height) * .36 * Math.sqrt(index / 20);
+          node.x = width / 2 + Math.cos(angle) * distance;
+          node.y = height / 2 + Math.sin(angle) * distance;
+        }
+      });
+    }
+    function spawnBalls(count) {
+      const speed = Math.min(340, Math.max(190, Math.min(width,height) * .42));
+      for (let i=0; i<count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        balls.push({x:width/2 + (i - (count-1)/2) * 4, y:height/2, vx:Math.cos(angle)*speed, vy:Math.sin(angle)*speed, r:8, launched:false});
+      }
+    }
+    function launch() {
+      if (phase !== "playing") return;
+      if (balls.every((ball) => ball.launched)) return;
+      ensureAudio();
+      const speed = Math.min(340, Math.max(190, Math.min(width,height) * .42));
+      balls.forEach((ball) => {
+        if (ball.launched) return;
+        const angle = Math.random() * Math.PI * 2;
+        ball.vx = Math.cos(angle) * speed;
+        ball.vy = Math.sin(angle) * speed;
+        ball.launched = true;
+      });
+      ui.status.textContent = "Contenders are in play";
+    }
+    function createBumpers() {
+      return Array.from({length:6}, (_, i) => {
+        const angle = i * Math.PI / 3;
+        return {x:width/2 + Math.cos(angle) * Math.min(width,height) * .19,
+          y:height/2 + Math.sin(angle) * Math.min(width,height) * .19, r:12};
+      });
+    }
+    function arenaRadius() {
+      return Math.min(width,height) * .48 * (1 - arenaProgress * .48);
+    }
+
+    function eliminate(node) {
+      if (!node || !node.alive || phase !== "playing") return;
+      node.alive = false;
+      const remaining = nodes.filter((item) => item.alive).length;
+      burst(node.x, node.y, node.color, 28);
+      badges.push({x:node.x,y:node.y,life:1,text:node.icon + " " + node.name,color:node.color});
+      playSound("hit");
+      const rank = remaining + 1;
+      const lostPlayers = players.filter((player) => player.alive && player.pick === node.id);
+      for (const player of lostPlayers) {
+        player.alive = false;
+        player.place = rank;
+        if (players.length > 1) announce(`${player.name} was ELIMINATED! Place: #${rank}`);
+        if (player.single && remaining > 0) {
+          phase = "loss";
+          playSound("loss");
+          showLoss(node, rank);
+          updateHud();
+          return;
+        }
+      }
+      updateHud();
+      if (remaining === 1) beginVictory(nodes.find((item) => item.alive));
+    }
+    function announce(message) {
+      ui.toast.textContent = message;
+      ui.toast.classList.remove("hidden", "fade");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => ui.toast.classList.add("fade"), 2600);
+      setTimeout(() => ui.toast.classList.add("hidden"), 3000);
+    }
+    function updateHud() {
+      const remaining = nodes.filter((node) => node.alive).length;
+      ui.remaining.textContent = `${remaining} / 20`;
+      if (!players.length) {
+        ui.leaderboard.classList.add("hidden");
+        return;
+      }
+      ui.leaderboard.classList.remove("hidden");
+      ui.leaderboard.innerHTML = `<div class="mb-2 text-xs font-bold uppercase tracking-[.18em] text-indigo-200">${players.length > 1 ? "Player leaderboard" : "Your bet"}</div>` +
+        players.map((player, i) => {
+          const item = nodes[player.pick];
+          const state = player.alive ? '<span class="text-emerald-300">ALIVE</span>' : `<span class="text-rose-300">#${player.place} Eliminated</span>`;
+          return `<div class="flex items-center justify-between gap-2 border-t border-white/10 py-2 text-xs">
+            <span class="min-w-0 truncate text-slate-200">${players.length > 1 ? `P${i+1} · ` : ""}${escapeHtml(player.name)} <span class="text-slate-400">${escapeHtml(item.icon)} ${escapeHtml(item.name)}</span></span><span class="shrink-0 font-bold">${state}</span></div>`;
+        }).join("");
+    }
+    function showLoss(node, rank) {
+      ui.resultEyebrow.textContent = "Bet eliminated";
+      ui.resultTitle.textContent = "YOU LOST!";
+      ui.resultSubtitle.textContent = `${node.icon} ${node.name} was eliminated at #${rank} out of 20.`;
+      ui.details.classList.add("hidden");
+      ui.result.classList.remove("hidden");
+    }
+    function beginVictory(champion) {
+      phase = "victory";
+      winner = champion;
+      balls.forEach((ball) => { ball.vx = 0; ball.vy = 0; });
+      champion.startX = champion.x;
+      champion.startY = champion.y;
+      champion.scale = 1;
+      champion.victoryElapsed = 0;
+      burst(width/2, height/2, "#fbbf24", 150);
+      playSound("win");
+      const winners = players.filter((player) => player.pick === champion.id);
+      ui.resultEyebrow.textContent = "Arena champion";
+      ui.resultTitle.textContent = `${champion.name.toUpperCase()} WINS!`;
+      ui.resultSubtitle.textContent = players.length === 0 ? "The arena has a new champion." :
+        winners.length === 0 ? "The House Wins! No players guessed the winner." :
+        players.length === 1 ? "You Win the Bet!" :
+        winners.map((player) => `Player ${players.indexOf(player)+1} (${player.name}) Wins the Bet!`).join(" ");
+      ui.about.textContent = champion.about;
+      ui.fact.textContent = champion.fact;
+      ui.details.classList.remove("hidden");
+      ui.result.classList.remove("hidden");
+      updateHud();
+    }
+    function burst(x,y,color,count) {
+      for (let i=0; i<count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 40 + Math.random() * 260;
+        particles.push({x,y,vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,life:.55+Math.random()*.9,max:1.45,size:2+Math.random()*3,color});
+      }
+    }
+    function eliminateAt(x,y) {
+      const target = nodes.find((node) => node.alive && Math.hypot(node.x-x,node.y-y) < node.r+8);
+      if (target) eliminate(target);
+    }
+    canvas.addEventListener("pointerdown", (event) => {
+      if (phase !== "playing") return;
+      const rect = canvas.getBoundingClientRect();
+      eliminateAt(event.clientX - rect.left, event.clientY - rect.top);
+    });
+    window.addEventListener("keydown", (event) => {
+      if (event.code !== "Space" || event.repeat) return;
+      if (phase === "setup") return;
+      event.preventDefault();
+      if (phase === "playing") launch();
+      else if (phase === "loss" || phase === "victory") startGame();
+    });
+    ui.start.addEventListener("click", startGame);
+    $("again-button").addEventListener("click", startGame);
+    $("menu-button").addEventListener("click", () => {
+      phase = "setup";
+      ui.result.classList.add("hidden");
+      ui.hud.classList.add("hidden");
+      ui.leaderboard.classList.add("hidden");
+      ui.setup.classList.remove("hidden");
+      draw();
+    });
+
+    function reflect(ball,nx,ny) {
+      const dot = ball.vx*nx + ball.vy*ny;
+      if (dot < 0) { ball.vx -= 2*dot*nx; ball.vy -= 2*dot*ny; }
+    }
+    function update(dt) {
+      if (phase === "playing") {
+        elapsed += dt;
+        if (gameMode === "shrinking") arenaProgress = Math.min(1, elapsed / 100);
+        const centerX = width/2, centerY = height/2;
+        for (const ball of balls) {
+          if (!ball.launched) continue;
+          if (gameMode === "gravity") {
+            ball.vx += (centerX-ball.x) * .1 * dt;
+            ball.vy += (centerY-ball.y) * .1 * dt;
+          }
+          ball.x += ball.vx * dt;
+          ball.y += ball.vy * dt;
+          if (gameMode === "shrinking") {
+            const dx = ball.x-centerX, dy = ball.y-centerY;
+            const distance = Math.hypot(dx,dy);
+            const limit = arenaRadius()-ball.r;
+            if (distance > limit) {
+              const nx=dx/distance, ny=dy/distance;
+              ball.x=centerX+nx*limit; ball.y=centerY+ny*limit;
+              reflect(ball,nx,ny); playSound("bounce");
+            }
+          } else {
+            if (ball.x-ball.r < 0) { ball.x=ball.r; ball.vx=Math.abs(ball.vx); playSound("bounce"); }
+            if (ball.x+ball.r > width) { ball.x=width-ball.r; ball.vx=-Math.abs(ball.vx); playSound("bounce"); }
+            if (ball.y-ball.r < 0) { ball.y=ball.r; ball.vy=Math.abs(ball.vy); playSound("bounce"); }
+            if (ball.y+ball.r > height) { ball.y=height-ball.r; ball.vy=-Math.abs(ball.vy); playSound("bounce"); }
+          }
+          if (gameMode === "gravity") {
+            for (const bumper of bumperPositions) {
+              const dx=ball.x-bumper.x, dy=ball.y-bumper.y, distance=Math.hypot(dx,dy);
+              if (distance < ball.r+bumper.r && distance > 0) {
+                const nx=dx/distance, ny=dy/distance;
+                ball.x=bumper.x+nx*(ball.r+bumper.r);
+                ball.y=bumper.y+ny*(ball.r+bumper.r);
+                reflect(ball,nx,ny); playSound("bounce");
+              }
+            }
+          }
+          const hit = nodes.find((node) => node.alive && Math.hypot(node.x-ball.x,node.y-ball.y) < node.r+ball.r);
+          if (hit) {
+            eliminate(hit);
+            if (phase !== "playing") return;
+            if (gameMode === "speed") { ball.vx*=1.12; ball.vy*=1.12; }
+          }
+        }
+        if (gameMode === "shrinking") {
+          const radius=arenaRadius()-24;
+          for (const node of nodes) if (node.alive) {
+            const dx=node.x-centerX, dy=node.y-centerY, distance=Math.hypot(dx,dy);
+            if (distance > radius && distance > 0) {
+              node.x += dx/distance * (radius-distance) * Math.min(1,dt*2);
+              node.y += dy/distance * (radius-distance) * Math.min(1,dt*2);
+            }
+          }
+        }
+      }
+      for (const particle of particles) {
+        particle.x += particle.vx*dt; particle.y += particle.vy*dt;
+        particle.vx *= Math.pow(.14,dt); particle.vy = particle.vy*Math.pow(.25,dt)+100*dt;
+        particle.life -= dt;
+      }
+      particles = particles.filter((particle) => particle.life > 0);
+      for (const badge of badges) { badge.y -= 24*dt; badge.life -= dt*.75; }
+      badges = badges.filter((badge) => badge.life > 0);
+      if (winner && phase === "victory") {
+        winner.victoryElapsed += dt;
+        const t=Math.min(1,winner.victoryElapsed/1.5);
+        const ease=1-Math.pow(1-t,3);
+        winner.x=winner.startX+(width/2-winner.startX)*ease;
+        winner.y=winner.startY+(height/2-winner.startY)*ease;
+        winner.scale=1+2.2*ease;
+        if (Math.random() < dt*9) burst(Math.random()*width,Math.random()*height*.8,randomColor(Math.floor(Math.random()*8)),16);
+      }
+    }
+    function draw() {
+      ctx.clearRect(0,0,width,height);
+      const gradient=ctx.createRadialGradient(width*.5,height*.5,0,width*.5,height*.5,Math.max(width,height)*.75);
+      gradient.addColorStop(0,"#141b38"); gradient.addColorStop(1,"#080b18");
+      ctx.fillStyle=gradient; ctx.fillRect(0,0,width,height);
+      ctx.save();
+      ctx.strokeStyle="rgba(167,139,250,.055)"; ctx.lineWidth=1;
+      for (let x=0;x<width;x+=48) { ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,height);ctx.stroke(); }
+      for (let y=0;y<height;y+=48) { ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(width,y);ctx.stroke(); }
+      ctx.restore();
+      if (phase === "playing" && gameMode === "shrinking") {
+        ctx.beginPath();ctx.arc(width/2,height/2,arenaRadius(),0,Math.PI*2);
+        ctx.strokeStyle="rgba(244,114,182,.65)";ctx.lineWidth=2;ctx.setLineDash([8,8]);ctx.stroke();ctx.setLineDash([]);
+      }
+      if (phase === "playing" && gameMode === "gravity") {
+        for (const bumper of bumperPositions) {
+          ctx.beginPath();ctx.arc(bumper.x,bumper.y,bumper.r+5,0,Math.PI*2);
+          ctx.fillStyle="rgba(129,140,248,.12)";ctx.fill();
+          ctx.beginPath();ctx.arc(bumper.x,bumper.y,bumper.r,0,Math.PI*2);
+          ctx.fillStyle="#818cf8";ctx.shadowColor="#818cf8";ctx.shadowBlur=18;ctx.fill();ctx.shadowBlur=0;
+        }
+      }
+      for (const node of nodes) if (node.alive) {
+        const scale=node.scale || 1;
+        ctx.save();ctx.translate(node.x,node.y);ctx.scale(scale,scale);
+        ctx.beginPath();ctx.arc(0,0,node.r+5,0,Math.PI*2);ctx.fillStyle=node.color+"22";ctx.fill();
+        ctx.beginPath();ctx.arc(0,0,node.r,0,Math.PI*2);
+        ctx.fillStyle="#151b31";ctx.fill();ctx.lineWidth=2;ctx.strokeStyle=node.color;ctx.shadowColor=node.color;ctx.shadowBlur=15;ctx.stroke();ctx.shadowBlur=0;
+        ctx.fillStyle="#fff";ctx.font="800 13px Inter, system-ui, sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(String(node.id+1),0,1);
+        ctx.restore();
+      }
+      for (const ball of balls) {
+        ctx.beginPath();ctx.arc(ball.x,ball.y,ball.r,0,Math.PI*2);
+        ctx.fillStyle="#fff";ctx.shadowColor="#c4b5fd";ctx.shadowBlur=22;ctx.fill();ctx.shadowBlur=0;
+        if (phase === "playing" && !ball.launched) {
+          ctx.beginPath();ctx.arc(ball.x,ball.y,ball.r+7+Math.sin(performance.now()/180)*2,0,Math.PI*2);
+          ctx.strokeStyle="rgba(255,255,255,.35)";ctx.stroke();
+        }
+      }
+      for (const particle of particles) {
+        ctx.globalAlpha=Math.max(0,particle.life/particle.max);
+        ctx.fillStyle=particle.color;ctx.fillRect(particle.x,particle.y,particle.size,particle.size);
+      }
+      ctx.globalAlpha=1;
+      for (const badge of badges) {
+        ctx.globalAlpha=Math.min(1,badge.life);
+        ctx.font="600 13px Inter, system-ui, sans-serif";
+        const text=badge.text, tw=ctx.measureText(text).width;
+        ctx.fillStyle="rgba(13,18,38,.86)";ctx.beginPath();ctx.roundRect(badge.x-tw/2-10,badge.y-15,tw+20,30,12);ctx.fill();
+        ctx.strokeStyle=badge.color;ctx.stroke();
+        ctx.fillStyle="#fff";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(text,badge.x,badge.y);
+      }
+      ctx.globalAlpha=1;
+    }
+    function frame(now) {
+      if (phase === "setup") return;
+      const dt=Math.min((now-lastFrame)/1000,.04);
+      lastFrame=now;
+      update(dt);
+      draw();
+      if (phase === "playing" || phase === "victory" || particles.length || badges.length) requestAnimationFrame(frame);
+    }
+    resize();
+    draw();
+  </script>
+</body>
+</html>
